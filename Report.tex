@@ -1,0 +1,425 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+\renewcommand{\arraystretch}{1.15}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\begin{document}
+
+% ---------------------------------------------------------------- Title page
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\LARGE\bfseries Forecasting Short-Term Stock Market Volatility\par}
+\vspace{1cm}
+{\large Kaggle Project Benchmark: Report\par}
+\vspace{0.5cm}
+{\large CSCI 470 Machine Learning, Fall 2026\par}
+{\large Colorado School of Mines\par}
+\vspace{1.5cm}
+{\large Mark Suchodolskyi\par}
+\vspace{0.5cm}
+{\large November 15, 2026\par}
+\vspace{2cm}
+\begin{minipage}{0.8\textwidth}
+\textbf{Research question:} Can machine learning predict the volatility of a stock over its next five trading days using historical price movements, trading volume, and market trends?
+\end{minipage}
+\end{titlepage}
+
+% ---------------------------------------------------------------- Introduction
+\section{Motivation and Practical Application}
+
+Financial market can experience many changes even in a single day. Some period of relative stability and others of substantial price fluctuations. That's why it is important to understand what will happen to the market.
+
+An important characteristic of market timeline is \textbf{volatility clustering:} large price movement tend to happen with other large movements, while calmer periods tend to persist.
+
+This application can assist investors and risk analysts by estimating stock's expected daily volatility over the next five trading days. For example, an analyst could compare the predicted volatility of different stock's and identify which one may require additional risk monitoring.
+
+I chose this project to gain a better understanding of financial markets and of how well machine learning can predict these always-fluctuating markets.
+
+\section{Introduction}
+
+I plan to build a regression model that analyzes stock price history and predicts the magnitude of future price fluctuations.
+
+I will focus on three things:
+
+\begin{itemize}
+\item \textbf{Prediction:} Estimate future volatility using data available at a fixed point in time.
+\item \textbf{Comparison:} Compare such ML algorithm with simple historical models.
+
+\textbf{Note:} Such comparison is not trivial, see \href{https://www.sciencedirect.com/science/article/abs/pii/S0927539824000598}{Forecasting realized volatility: Does anything beat linear models?} [2]
+\item \textbf{Evaluation:} Measure how accurately models predict volatility on unseen data.
+\end{itemize}
+
+\subsection{Target Interpretation}
+
+In the future section we will do feature engineering to process data. With that data we will estimate at the end of trading day $t$ how large the stock's daily price changes will be, on average, measured as the root mean square (RMS) of daily log returns, during trading days $t+1$ to $t+5$.
+
+Define the closing price on trading day $t$ as $C(t)$.
+
+\subsubsection*{Daily Logarithm Return}
+\[
+r(t) = \ln\left(\frac{C(t)}{C(t-1)}\right)
+\]
+
+I am using logarithmic return because
+\begin{itemize}
+\item Log returns add over time, so $r(t) + r(t + 1)$ is the log return over two days.
+\item For typical daily price changes they are close to simple percentage returns ($\ln(x + 1) \approx x$)
+\end{itemize}
+
+\subsubsection*{Five Session Realized Volatility}
+\[
+y(t) = \sqrt{ \frac{r(t+1)^2 + r(t+2)^2 + r(t+3)^2 + r(t+4)^2 + r(t+5)^2}{5} }
+\]
+
+\subsubsection*{Worked Example \textit{(Illustrative, Not Market Data)}}
+
+Suppose a stock records the following daily log returns ($r_t$) over the next 5 trading sessions:
+
+\begin{center}
+\begin{tabular}{l|ccccc}
+\hline
+Future Session ($t$) & 1 & 2 & 3 & 4 & 5 \\
+\hline
+\textbf{Daily Log Return ($r_t$)} & $+2\%$ & $-1\%$ & $+3\%$ & $-2\%$ & $+1\%$ \\
+\textbf{Squared Return ($r_t^2$)} & $4$ & $1$ & $9$ & $4$ & $1$ \\
+\hline
+\end{tabular}
+\end{center}
+
+We compute the target $\boldsymbol{y}$ (5-day Root Mean Square daily volatility) as:
+\[
+\begin{aligned}
+y &= \sqrt{\frac{1}{5} \sum_{t=1}^{5} r_t^2} = \sqrt{\frac{2^2 + (-1)^2 + 3^2 + (-2)^2 + 1^2}{5}} \\
+  &= \sqrt{\frac{19}{5}} = \sqrt{3.8} \approx \mathbf{1.95\%} \text{ daily RMS volatility}
+\end{aligned}
+\]
+
+\subsection{Success Criterion}
+
+The selected ML model has \textbf{lower held-out test RMSE} than the past 20-session RMS-volatility baseline.
+
+% ---------------------------------------------------------------- Technical details
+\section{Data Collection}
+
+The model uses historical data from Stooq for 20 large-cap US stocks across many industries, such as technology, financials, healthcare, etc. (for more details look below), together with SPY for more market conditions (look for definition below).
+
+\textbf{Dataset:} \href{https://stooq.com/db/h/}{Stooq Historical Data} [1].
+
+\textbf{Download data for usage:} U.S. $\rightarrow$ Daily $\rightarrow$ ASCII
+
+\subsubsection*{Expected bulk ASCII columns}
+{\small
+\begin{verbatim}
+<TICKER>,<PER>,<DATE>,<TIME>,<OPEN>,<HIGH>,<LOW>,<CLOSE>,<VOL>,<OPENINT>
+AAPL.US,D,20261113,000000,357.96,360.83,355.75,356.27,40027467,0
+\end{verbatim}
+}
+
+\subsubsection*{Quick Term Guide}
+\begin{itemize}
+\item \textbf{Stock vs. ETF} --- A \textbf{stock} is a share of ownership in one company. An \textbf{ETF} (Exchange-Traded Fund) holds a basket of securities and trades like a single stock; \code{SPY} holds the S\&P 500, so its price tracks the broader US market.
+\item \textbf{\code{SPY} (SPDR S\&P 500 ETF Trust)} --- An exchange-traded fund tracking the S\&P 500 (\code{us-daily-data/nyse etfs/} \code{2/spy.us.txt}), used as a proxy feature to capture broad, market-wide volatility that individual stock histories miss.
+\end{itemize}
+
+\section{Data Cleaning}
+
+As seen from above downloaded data set is vast, so we will first make some data cleaning. We will keep the following stocks:
+
+\begin{center}
+\begin{tabular}{llc}
+\hline
+\textbf{Sector} & \textbf{Tickers} & \textbf{Count} \\
+\hline
+Technology & \code{AAPL}, \code{MSFT}, \code{NVDA}, \code{AMD}, \code{INTC} & 5 \\
+Financials & \code{JPM}, \code{BAC}, \code{V}, \code{MA} & 4 \\
+Consumer & \code{WMT}, \code{COST}, \code{KO}, \code{PG} & 4 \\
+Healthcare & \code{JNJ}, \code{PFE} & 2 \\
+Energy / Industry & \code{XOM}, \code{CVX}, \code{CAT} & 3 \\
+Media / Entertainment & \code{DIS}, \code{NFLX} & 2 \\
+\hline
+\end{tabular}
+\end{center}
+
+\subsection{Data We Are Working With}
+
+Loaded 52,101 rows for 21 tickers, 2017-01-03 to 2026-11-13. Example input rows (most recent five trading days of AAPL):
+
+\begin{center}
+{\small
+\begin{tabular}{llrrrrr}
+\hline
+\textbf{ticker} & \textbf{date} & \textbf{open} & \textbf{high} & \textbf{low} & \textbf{close} & \textbf{volume} \\
+\hline
+AAPL & 2026-11-09 & 344.733 & 352.063 & 344.518 & 350.424 & 48,790,090 \\
+AAPL & 2026-11-10 & 351.083 & 353.601 & 346.197 & 348.245 & 29,778,670 \\
+AAPL & 2026-11-11 & 349.280 & 355.640 & 349.060 & 355.360 & 34,479,650 \\
+AAPL & 2026-11-12 & 357.810 & 359.368 & 354.410 & 354.880 & 31,874,980 \\
+AAPL & 2026-11-13 & 357.960 & 360.830 & 355.750 & 356.270 & 40,027,470 \\
+\hline
+\end{tabular}
+}
+\end{center}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.45\textwidth]{figures/price_history.png}
+\caption{Closing price since January 2017 for four contrasting tickers (start = 100, log scale).}
+\end{figure}
+
+\section{Feature Engineering}
+
+We will design features for a better data interpretation. The model might benefit from knowing:
+\begin{itemize}
+\item How much has the stock changed recently?
+\item Has the stock become more volatile than usual?
+\item Are daily trading ranges increasing?
+\item What happens to trading activity?
+\end{itemize}
+
+\begin{center}
+{\small
+\begin{tabular}{lll}
+\hline
+\textbf{Feature} & \textbf{Mathematical Definition} & \textbf{Motivation} \\
+\hline
+\code{ret\_1} & $r(t) = \ln\left(\frac{C(t)}{C(t-1)}\right)$ & Most recent signed shock \\[4pt]
+\code{abs\_ret\_1} & $\lvert r(t) \rvert$ & Most recent shock size \\[4pt]
+\code{return\_5} & $\ln\left(\frac{C(t)}{C(t-5)}\right)$ & Recent momentum / short-term trend \\[4pt]
+\code{return\_20} & $\ln\left(\frac{C(t)}{C(t-20)}\right)$ & Medium-term momentum / trend \\[4pt]
+\code{rv\_5} & $\sqrt{\frac{1}{5}\sum_{i=0}^{4} r(t-i)^2}$ & Short-term volatility persistence (5-day) \\[4pt]
+\code{rv\_10} & $\sqrt{\frac{1}{10}\sum_{i=0}^{9} r(t-i)^2}$ & Short-term volatility persistence (10-day) \\[4pt]
+\code{rv\_20} & $\sqrt{\frac{1}{20}\sum_{i=0}^{19} r(t-i)^2}$ & Medium-term volatility (20-day) \\[4pt]
+\code{rv\_60} & $\sqrt{\frac{1}{60}\sum_{i=0}^{59} r(t-i)^2}$ & Longer-term volatility baseline (60-day) \\[4pt]
+\code{range\_5} & $\frac{1}{5}\sum_{i=0}^{4} \frac{H(t-i) - L(t-i)}{C(t-i)}$ & Intraday trading range (5-day) \\[4pt]
+\code{range\_20} & $\frac{1}{20}\sum_{i=0}^{19} \frac{H(t-i) - L(t-i)}{C(t-i)}$ & Intraday trading range (20-day) \\[4pt]
+\code{relative\_volume\_20} & $\frac{V(t)}{\frac{1}{20}\sum_{i=0}^{19} V(t-i)}$ & Unusual trading activity \\[4pt]
+\code{mkt\_rv\_5} & \code{rv\_5} computed on SPY & Short-term market-wide volatility \\
+\code{mkt\_rv\_20} & \code{rv\_20} computed on SPY & Medium-term market-wide volatility \\
+\hline
+\end{tabular}
+}
+\end{center}
+
+\textbf{Notation.} For a given stock on trading day $t$: $C(t)$ is the closing price, $H(t)$ the highest price of the day, $L(t)$ the lowest price of the day, and $V(t)$ the number of shares traded (volume). $r(t)$ is the daily log return (\code{ret\_1}). Every feature uses data up to and including day $t$ only. The two market features apply the same volatility formulas to SPY, giving 13 features in total.
+
+After feature engineering: 44,500 stock-day rows, 13 features, 20 stocks (5,120 warm-up / no-target rows dropped). Dates: 2018-01-02 to 2026-11-06.
+
+\section{Leakage-Safe Experimental Design}
+
+To make sure that model never sees tests that it will be tested on, I will separate whole data into 3 parts: Train, Validation, and Test data. Each separation is done on time, so:
+
+\begin{center}
+{\small
+\begin{tabular}{l>{\raggedright}p{4.2cm}>{\raggedright\arraybackslash}p{7.3cm}}
+\hline
+\textbf{Split} & \textbf{Forecast Dates ($t$)} & \textbf{Inclusion / Leakage Rule} \\
+\hline
+\textbf{Training} & \code{2018-01-01} to \code{2023-12-31} & Include a row only if its 5th future trading day ($t+5$) is $\le$ \code{2023-12-31}. \\
+\textbf{Validation} & \code{2024-01-01} to \code{2024-12-31} & Include a row only if its 5th future trading day ($t+5$) is $\le$ \code{2024-12-31}. \\
+\textbf{Final Test} & \code{2025-01-01} to latest fully labeled \code{2026} date & Strict holdout: never used to choose features, hyperparameters, or the winning model. \\
+\hline
+\end{tabular}
+}
+\end{center}
+
+\subsubsection*{Why do we remove rows at the boundaries?}
+
+Because then model will use outcomes from the other split in the current one. E.g., training data will use some part of validation data, which would leak the data and show incorrect training results.
+
+\begin{center}
+{\small
+\begin{tabular}{lllrrr}
+\hline
+\textbf{Set} & \textbf{First day} & \textbf{Last day} & \textbf{Rows} & \textbf{Share (\%)} & \textbf{Mean target (\%)} \\
+\hline
+Train & 2018-01-02 & 2023-12-21 & 30,080 & 67.6 & 1.693 \\
+Validation & 2024-01-02 & 2024-12-23 & 4,940 & 11.1 & 1.398 \\
+Test & 2025-01-02 & 2026-11-06 & 9,280 & 20.9 & 1.735 \\
+\hline
+\end{tabular}
+}
+\end{center}
+
+Purged rows (target window crosses a boundary): 200.
+
+\section{Models and Training}
+
+Now, let's consider different models to use.
+
+\begin{center}
+{\small
+\begin{tabular}{>{\raggedright}p{3.6cm}>{\raggedright}p{5.6cm}>{\raggedright\arraybackslash}p{5.3cm}}
+\hline
+\textbf{Experiment} & \textbf{Configuration} & \textbf{Reason to Include} \\
+\hline
+\textbf{A. Constant median} & Median training target \textit{(no fitting)} & Sanity check: difficulty relative to trivial guessing \\
+\textbf{B. Last 5-day volatility} & \code{Prediction = rv\_5} \textit{(no fitting)} & Short-memory persistence \\
+\textbf{C. 20-day RMS baseline} & \code{Prediction = rv\_20} \textit{(no fitting)} & Direct benchmark: volatility persistence \\
+\textbf{D. Linear regression} & \code{LinearRegression} on log \code{rv\_5}, \code{rv\_20}, \code{rv\_60} & Classic three-horizon volatility model \\
+\textbf{E. Ridge regression} & \code{StandardScaler} + \code{Ridge(alpha=10)} on all 13 features & Interpretable regularized linear regression \\
+\textbf{F. XGBoost (default)} & \code{XGBRegressor} with library defaults & Captures nonlinearities, untuned \\
+\textbf{G. XGBoost (tuned)} & 12-configuration grid, early stopping on validation & Tests whether tuning and capacity help \\
+\hline
+\end{tabular}
+}
+\end{center}
+
+XGBoost tuning, best five of 12 configurations:
+
+\begin{center}
+{\small
+\begin{tabular}{rrrrrr}
+\hline
+\textbf{max\_depth} & \textbf{learning\_rate} & \textbf{min\_child\_weight} & \textbf{rounds} & \textbf{val MAE} & \textbf{val RMSE} \\
+\hline
+2 & 0.05 & 20 & 601 & 0.4965 & 0.8517 \\
+3 & 0.05 & 20 & 119 & 0.4950 & 0.8521 \\
+5 & 0.05 & 100 & 65 & 0.4949 & 0.8523 \\
+3 & 0.05 & 100 & 196 & 0.4963 & 0.8525 \\
+5 & 0.02 & 20 & 163 & 0.4946 & 0.8526 \\
+\hline
+\end{tabular}
+}
+\end{center}
+
+\section{Evaluation and Results Analysis}
+
+For each model from above we will consider MAE (lower is better), RMSE (lower is better) and $\text{R}^2$ (higher is better) errors. As well as show relative improvement from the baseline.
+\[
+\text{Improvement}(\%) = 100 \times (1 - \text{RMSE}(\text{model}) / \text{RMSE}(\text{baseline}))
+\]
+
+\begin{center}
+{\small
+\begin{tabular}{lrrrr}
+\hline
+\textbf{Model} & \textbf{Test MAE} & \textbf{Test RMSE} & \textbf{Test R$^2$} & \textbf{Improvement (\%)} \\
+\hline
+Ridge (all features) & 0.627 & 1.068 & 0.36 & 9.4 \\
+XGBoost (tuned) & 0.650 & 1.111 & 0.31 & 5.7 \\
+Linear regression (3 volatilities) & 0.649 & 1.112 & 0.30 & 5.7 \\
+Baseline: 20-day volatility & 0.753 & 1.179 & 0.22 & 0.0 \\
+XGBoost (default) & 0.701 & 1.210 & 0.18 & $-2.6$ \\
+Last 5-day volatility & 0.828 & 1.316 & 0.03 & $-11.6$ \\
+Constant (train median) & 0.790 & 1.400 & $-0.10$ & $-18.7$ \\
+\hline
+\end{tabular}
+}
+\end{center}
+
+\subsection{Visualize Results}
+
+Let's answer the next questions:
+\begin{itemize}
+\item What model performed best in 2024?
+\item Are predictions accurate across low/high volatility?
+\item How well model responds to change in market conditions?
+\item Is performance stable in 2025 vs 2026?
+\item Which engineered featured were the most useful?
+\end{itemize}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.55\textwidth]{figures/fig1_validation_comparison.png}
+\caption{Validation model comparison.}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.58\textwidth]{figures/fig2_actual_vs_predicted.png}
+\caption{Test set: actual vs predicted.}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.62\textwidth]{figures/fig3_predictions_through_time.png}
+\caption{Test predictions through time.}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.42\textwidth]{figures/fig4_mae_by_year.png}
+\caption{MAE by test year.}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.72\textwidth]{figures/fig5_feature_importance.png}
+\caption{Feature importance.}
+\end{figure}
+
+\subsection{Model Performance Results}
+
+We found out that machine learning can improve short-term volatility predictions compared with baseline estimator.
+
+Ridge Regression achieved the lowest validation RMSE of 0.847 and was selected as the final model. On the held-out test dataset, Ridge achieved an RMSE of 1.068 percentage points, compared with 1.179 for the 20-day historical-volatility baseline. It gives a 9.4\% reduction in RMSE.
+
+Ridge also achieved a lower MAE of 0.627 compared with the baseline's 0.753, representing an improvement of approximately 16.7\%. Its test R$^2$ was 0.359, compared with 0.218 for the baseline.
+
+Interestingly, increasing model complexity did not necessarily improve performance. The default XGBoost model produced a test RMSE of 1.210, which was worse than the simple historical baseline.
+
+Hyperparameter tuning improved XGBoost's test RMSE to 1.111, but the tuned model still performed worse than Ridge Regression.
+
+The most useful features were \code{range\_5} and \code{range\_20} affecting the volatility the most.
+
+Finally, Ridge outperformed the baseline in both test years when evaluated using MAE. Meaning that the overall improvement was not restricted to a single year.
+
+% ---------------------------------------------------------------- Challenges and conclusion
+\section{Challenges}
+
+\begin{enumerate}
+\item The main challenge is unpredictable market events. Historical data cannot predict unexpected news, geopolitical developments or just sudden changes in investor behavior.
+\item Changes in market timeline. The validation and test periods had different volatility characteristics. Ridge's RMSE increased from 0.847 in validation to 1.068 in testing, which means that performance in one year may not fully represent general performance.
+\item Dataset limitations. I only used 20 selected large-cap stocks, but they do not represent the entire stock market. Selecting them can introduce survivorship bias (focusing on winners).
+\item Uncertainty. Models produced point predictions rather than prediction intervals. Volatility does not give the full associated uncertainty in the market.
+\end{enumerate}
+
+\subsection*{Ethical Implications}
+
+Although volatility forecasts can help investors assess financial risk, inaccurate predictions may create a false sense of security. In particular, relying too heavily on volatility forecasts could lead users to take greater financial risks.
+
+Therefore, all predictions made by the model should be considered estimates rather than guarantees.
+
+\section{Conclusion}
+
+The main objective of this project was to determine if the machine learning can predict future stock volatility better than a simple baseline model.
+
+The objective was achieved. Ridge Regression reduced held-out test RMSE by 9.4\% compared with the 20-day historical-volatility baseline.
+
+However, the model was less reliable when anticipating sudden volatility spikes. Its predictions were more effective at estimating general volatility conditions, disregarding extreme events discussed in challenges.
+
+Though this project, I learned the importance of feature engineering, chronological data splitting, prevention of data leakage, comparing models against meaningful baseline, and creating separate split of validation and testing data.
+
+If I had to do this project again, I would experiment with more hyperparameters for Ridge Regression and XGBoost, hoping for further improvement. I would also consider different training and validation splits.
+
+As a next step, I would consider additional features to improve predictions during sudden volatility spikes, which Ridge Regression struggles with.
+
+% ---------------------------------------------------------------- Acknowledgment and references
+\section{Acknowledgment and References}
+
+\subsection*{Acknowledgments}
+
+\begin{itemize}
+\item \textbf{Data.} Daily price and volume history was obtained from the Stooq historical database [1], which is free for non-commercial use.
+\item \textbf{AI assistance.} I used Claude (Anthropic) through Claude Code to help debug parts of the code, to verify results by re-running the pipeline independently, and to review the notebook for errors. ChatGPT (OpenAI) was used at the start to help search for ideas and scope the specific project. All results were produced by running the code in this notebook on the Stooq data.
+\item \textbf{Software.} The models were built with scikit-learn [4] and XGBoost [5], using pandas, NumPy, Matplotlib and seaborn for data handling and figures.
+\end{itemize}
+
+\subsection*{References}
+
+\begin{enumerate}
+\item Stooq. \textit{Historical data: U.S. daily (ASCII)}. \url{https://stooq.com/db/h/} (downloaded November 2026).
+\item Branco, R. R., Rubesam, A., and Zevallos, M. (2024). Forecasting realized volatility: Does anything beat linear models? \textit{Journal of Empirical Finance}, 78, 101524. \url{https://www.sciencedirect.com/science/article/abs/pii/S0927539824000598}. Motivation for comparing machine learning against simple linear models.
+\item Corsi, F. (2009). A simple approximate long-memory model of realized volatility. \textit{Journal of Financial Econometrics}, 7(2), 174-196. Source of the idea of regressing volatility on short-, medium- and long-horizon past volatility (the three-volatility linear regression).
+\item Pedregosa, F., et al. (2011). Scikit-learn: Machine learning in Python. \textit{Journal of Machine Learning Research}, 12, 2825-2830.
+\item Chen, T., and Guestrin, C. (2016). XGBoost: A scalable tree boosting system. \textit{Proceedings of the 22nd ACM SIGKDD Conference}, 785-794.
+\end{enumerate}
+
+\end{document}
